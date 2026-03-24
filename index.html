@@ -168,42 +168,51 @@ const VINE_DRAIN    = 4.0;   // attention pts/sec while on couch
 
 const INTERACTIONS = [
   {
-    id:      'youtube',
-    label:   'sit at computer',
-    video:   'assets/yt.mov',
-    caption: 'You clicked something you didn\'t understand.',
-    fx:      { aggression:+18, attention:-12 },
-    drain:   false,
-    step:    '01 — computer',
-  },
-  {
     id:      'vine',
     label:   'pick up phone',
     video:   'assets/vine.mov',
     caption: 'You kept scrolling. It didn\'t really stop.',
-    fx:      { creativity:+15 },
+    fx:      { creativity: 5 },   // per second
     drain:   true,
-    step:    '02 — couch',
+    step:    '01 — couch',
+    time:    0,                   // track duration
+    max:     20
   },
   {
     id:      'penguin',
     label:   'load Club Penguin',
     video:   'assets/penguin.mov',
     caption: 'You learned how to exist with others online.',
-    fx:      { social:+20, attention:-8 },
+    fx:      { social: 5 },       // per second
     drain:   false,
-    step:    '03 — game pc',
+    step:    '02 — game pc',
+    time:    0,
+    max:     20
   },
   {
     id:      'tv',
     label:   'watch TV',
     video:   'assets/tv.mov',
     caption: 'You absorbed more than you realized.',
-    fx:      { attitude:+16, attention:-10 },
+    fx:      { attitude: 4 },     // per second
     drain:   false,
-    step:    '04 — television',
+    step:    '03 — television',
+    time:    0,
+    max:     20
+  },
+  {
+    id:      'youtube',
+    label:   'sit at computer',
+    video:   'assets/yt.mov',
+    caption: 'You clicked something you didn\'t understand.',
+    fx:      { aggression: 4 },   // per second
+    drain:   false,
+    step:    '04 — computer',
+    time:    0,
+    max:     20
   },
 ];
+
 
 const TRAITS = { attention:100, aggression:0, creativity:0, social:0, attitude:0 };
 
@@ -296,20 +305,37 @@ this._arrowGfx  = this.add.graphics();
     this._updateStep();
   }
 
-  update(_, dt) {
-    if (this._done) return;
-    if (!this._busy) {
-      this._move(dt);
-      this._checkNear();
-      this._drawArrow();
-    } else {
-      const step = INTERACTIONS[this._step];
-      if (step && step.drain) {
-        TRAITS.attention = Math.max(0, TRAITS.attention - VINE_DRAIN * dt / 1000);
-        this._updateHUD();
+ update(_, dt) {
+  if (this._done) return;
+
+  if (!this._busy) {
+    this._move(dt);
+    this._checkNear();
+    this._drawArrow();
+  } else {
+    const step = INTERACTIONS[this._step];
+    if (!step) return;
+
+    // Increment time spent (in seconds)
+    step.time += dt / 1000;
+
+    // Apply per-second effects with optional max cap
+    Object.entries(step.fx).forEach(([trait, valuePerSec]) => {
+      let increment = valuePerSec * (dt / 1000);
+      if (step.max !== undefined) {
+        increment = Math.min(increment, step.max - (TRAITS[trait] || 0));
       }
+      TRAITS[trait] = Phaser.Math.Clamp((TRAITS[trait] || 0) + increment, 0, 100);
+    });
+
+    // Apply attention drain if applicable
+    if (step.drain) {
+      TRAITS.attention = Phaser.Math.Clamp(TRAITS.attention - VINE_DRAIN * dt / 1000, 0, 100);
     }
+
+    this._updateHUD();
   }
+}
 
   // ─── ROOM ──────────────────────────────────────────
   _buildRoom() {
@@ -497,12 +523,13 @@ this._arrowGfx  = this.add.graphics();
   // ─── HOTSPOTS ──────────────────────────────────────
   _defineHotspots() {
     // x,y = where player must walk to. Adjust if you move furniture.
-    this._spots = [
-      { id:'youtube',  x:148, y:118 },  // Desk 1
-      { id:'vine',     x:590, y:368 },  // Couch
-      { id:'penguin',  x:160, y:455 },  // Desk 2
-      { id:'tv',       x:638, y:134 },  // TV
-    ];
+  this._spots = [
+  { id:'vine',    x:590, y:368 },
+  { id:'penguin', x:160, y:455 },
+  { id:'tv',      x:638, y:134 },
+  { id:'youtube', x:148, y:118 },
+];
+    
   }
 
   // ─── PLAYER ────────────────────────────────────────
@@ -562,44 +589,74 @@ this._arrowGfx  = this.add.graphics();
   }
 
   // ─── E KEY ─────────────────────────────────────────
-  _onE() {
-    if (this._done) return;
-    if (this._busy) { this._exit(); return; }
-    if (this._near) { this._enter(); }
+ _onE() {
+  if (this._done) return;
+
+  if (this._busy) {
+    this._exit();
+    return;
   }
 
-  _enter() {
-    this._busy = true;
+  // Only enter if player is near a hotspot
+  if (this._near) {
+    const spot = this._spots[this._step];
+    if (spot && spot.id === this._near) {
+      this._enter();
+    }
+  }
+}
+
+_enter() {
+  this._busy = true;
+  this._prompt.classList.remove('visible');
+  this._arrowGfx.clear();
+
+  const step = INTERACTIONS[this._step];
+  if (!step) return;
+
+  // Reset time so duration starts fresh
+  step.time = 0;
+
+  // Set caption
+  this._capText.textContent = step.caption;
+  this._vFall.classList.remove('show');
+
+  // Try to load video
+  this._vEl.src = step.video;
+  this._vEl.currentTime = 0;
+  const playPromise = this._vEl.play();
+  if (playPromise !== undefined) {
+    playPromise.catch(() => {
+      this._vFall.classList.add('show');
+      this._fallCap.textContent = step.caption;
+    });
+  }
+
+  this._vOver.classList.add('active');
+}
+
+_exit() {
+  this._busy = false;
+  this._vEl.pause();
+  this._vEl.src = '';
+  this._vFall.classList.remove('show');
+  this._vOver.classList.remove('active');
+  this._near = null;
+
+  // Move to next hotspot
+  this._step++;
+  this._updateHUD();
+  this._updateStep();
+
+  if (this._step >= INTERACTIONS.length) {
+    this._done = true;
     this._prompt.classList.remove('visible');
     this._arrowGfx.clear();
-
-    const step = INTERACTIONS[this._step];
-
-    // Apply instant trait effects
-    Object.entries(step.fx).forEach(([k, v]) => {
-      TRAITS[k] = Phaser.Math.Clamp((TRAITS[k]||0)+v, 0, 100);
-    });
-    this._updateHUD();
-
-    // Set caption
-    this._capText.textContent = step.caption;
-    this._vFall.classList.remove('show');
-
-    // Try to load video
-    this._vEl.src = step.video;
-    this._vEl.currentTime = 0;
-
-    const playPromise = this._vEl.play();
-    if (playPromise !== undefined) {
-      playPromise.catch(() => {
-        // Video missing or blocked — show fallback
-        this._vFall.classList.add('show');
-        this._fallCap.textContent = step.caption;
-      });
-    }
-
-    this._vOver.classList.add('active');
+    setTimeout(() => this._showEnding(), 700);
   }
+}
+
+ 
 
   _exit() {
     this._busy = false;
