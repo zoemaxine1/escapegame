@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>shaped.</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --beige:     #f0ece4;
+      --warm-gray: #c8c3ba;
+      --mid-gray:  #8a8680;
+      --dark:      #1a1814;
+      --font-serif: 'DM Serif Display', Georgia, serif;
+      --font-mono:  'DM Mono', 'Courier New', monospace;
+    }
+    html, body { width:100%; height:100%; background:var(--beige); overflow:hidden; font-family:var(--font-mono); }
+
+    #game-container { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; }
+    #game-container canvas { display:block; }
+
+    /* HUD */
+    #hud { position:fixed; top:24px; left:28px; z-index:10; pointer-events:none; }
+    #hud-label { font-size:9px; font-weight:500; letter-spacing:3px; text-transform:uppercase; color:var(--mid-gray); margin-bottom:6px; }
+    #attention-track { width:110px; height:2px; background:var(--warm-gray); border-radius:1px; overflow:hidden; }
+    #attention-fill  { height:100%; width:100%; background:var(--dark); border-radius:1px; transition:width 0.6s ease; }
+
+    /* Step */
+    #step-indicator { position:fixed; top:24px; right:28px; z-index:10; pointer-events:none; text-align:right; }
+    #step-label { font-size:9px; letter-spacing:3px; text-transform:uppercase; color:var(--warm-gray); }
+
+    /* Prompt */
+    #prompt { position:fixed; bottom:32px; left:50%; transform:translateX(-50%); z-index:10; pointer-events:none; text-align:center; opacity:0; transition:opacity 0.35s ease; }
+    #prompt.visible { opacity:1; }
+    #prompt-key  { display:inline-block; font-size:10px; letter-spacing:2px; color:var(--mid-gray); border:1px solid var(--warm-gray); padding:3px 10px; border-radius:2px; margin-bottom:8px; }
+    #prompt-text { display:block; font-size:11px; color:var(--mid-gray); letter-spacing:0.5px; margin-top:4px; }
+
+    /* Video overlay */
+    #video-overlay {
+      position:fixed; inset:0; z-index:50;
+      display:flex; flex-direction:column; align-items:center; justify-content:center;
+      background:rgba(26,24,20,0.93);
+      opacity:0; pointer-events:none; transition:opacity 0.5s ease;
+    }
+    #video-overlay.active { opacity:1; pointer-events:all; }
+    #video-screen {
+      position:relative; width:min(680px,88vw); aspect-ratio:16/9;
+      background:#000; border:1px solid rgba(255,255,255,0.05);
+      box-shadow:0 40px 80px rgba(0,0,0,0.7); overflow:hidden;
+    }
+    #video-screen::after {
+      content:''; position:absolute; inset:0; pointer-events:none; z-index:2;
+      background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.04) 2px,rgba(0,0,0,0.04) 4px);
+    }
+    #video-el { width:100%; height:100%; object-fit:cover; display:block; }
+    #video-caption { margin-top:22px; max-width:min(520px,84vw); text-align:center; }
+    #video-caption-text { font-family:var(--font-serif); font-style:italic; font-size:clamp(14px,1.8vw,18px); color:rgba(240,236,228,0.72); line-height:1.6; }
+    #video-exit-hint { margin-top:14px; font-size:9px; letter-spacing:3px; text-transform:uppercase; color:rgba(255,255,255,0.18); }
+
+    /* No-video fallback message */
+    #video-fallback {
+      display:none; position:absolute; inset:0; align-items:center; justify-content:center; flex-direction:column; gap:12px;
+      background:#0a0808; z-index:3;
+    }
+    #video-fallback.show { display:flex; }
+    #video-fallback p { font-size:10px; letter-spacing:2px; text-transform:uppercase; color:rgba(255,255,255,0.3); }
+    #video-fallback span { font-family:var(--font-serif); font-style:italic; font-size:16px; color:rgba(255,255,255,0.55); }
+
+    /* Ending */
+    #ending {
+      position:fixed; inset:0; z-index:100; background:var(--beige);
+      display:flex; flex-direction:column; align-items:center; justify-content:center;
+      opacity:0; pointer-events:none; transition:opacity 1.2s ease; padding:40px;
+    }
+    #ending.active { opacity:1; pointer-events:all; }
+    #ending-intro { font-size:10px; letter-spacing:4px; text-transform:uppercase; color:var(--mid-gray); margin-bottom:36px; }
+    #ending-traits { display:flex; flex-direction:column; gap:16px; width:min(360px,88vw); margin-bottom:40px; }
+    .trait-row { display:flex; align-items:center; gap:14px; }
+    .trait-name { font-size:9px; letter-spacing:2px; text-transform:uppercase; color:var(--mid-gray); width:110px; flex-shrink:0; }
+    .trait-bar-track { flex:1; height:1px; background:var(--warm-gray); position:relative; }
+    .trait-bar-fill { position:absolute; top:0; left:0; height:100%; width:0%; background:var(--dark); transition:width 1.6s cubic-bezier(0.16,1,0.3,1); }
+    .trait-val { font-size:9px; color:var(--mid-gray); width:32px; text-align:right; }
+    #ending-attention { font-size:10px; letter-spacing:2px; color:var(--mid-gray); margin-bottom:48px; }
+    #ending-line { font-family:var(--font-serif); font-style:italic; font-size:clamp(17px,2.6vw,24px); color:var(--dark); text-align:center; max-width:420px; line-height:1.55; opacity:0; transition:opacity 1.1s ease 1.4s; }
+    #ending-line.show { opacity:1; }
+
+    /* Grain */
+    body::after { content:''; position:fixed; inset:0; z-index:200; pointer-events:none; opacity:0.022;
+      background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+      background-size:128px 128px; }
+  </style>
+</head>
+<body>
+
+<div id="game-container"></div>
+
+<div id="hud">
+  <div id="hud-label">Attention</div>
+  <div id="attention-track"><div id="attention-fill"></div></div>
+</div>
+
+<div id="step-indicator"><div id="step-label"></div></div>
+
+<div id="prompt">
+  <span id="prompt-key">E</span>
+  <span id="prompt-text"></span>
+</div>
+
+<div id="video-overlay">
+  <div id="video-screen">
+    <video id="video-el" playsinline loop></video>
+    <div id="video-fallback">
+      <p>no video file found</p>
+      <span id="fallback-caption"></span>
+      <p style="margin-top:8px;font-size:9px">place your .mp4 in /assets/ — press E to continue</p>
+    </div>
+  </div>
+  <div id="video-caption">
+    <p id="video-caption-text"></p>
+    <p id="video-exit-hint">press E to stop</p>
+  </div>
+</div>
+
+<div id="ending">
+  <p id="ending-intro">You grew up with</p>
+  <div id="ending-traits">
+    <div class="trait-row">
+      <span class="trait-name">Aggression</span>
+      <div class="trait-bar-track"><div class="trait-bar-fill" id="bar-aggression"></div></div>
+      <span class="trait-val" id="val-aggression">0</span>
+    </div>
+    <div class="trait-row">
+      <span class="trait-name">Creativity</span>
+      <div class="trait-bar-track"><div class="trait-bar-fill" id="bar-creativity"></div></div>
+      <span class="trait-val" id="val-creativity">0</span>
+    </div>
+    <div class="trait-row">
+      <span class="trait-name">Social Skills</span>
+      <div class="trait-bar-track"><div class="trait-bar-fill" id="bar-social"></div></div>
+      <span class="trait-val" id="val-social">0</span>
+    </div>
+    <div class="trait-row">
+      <span class="trait-name">Attitude</span>
+      <div class="trait-bar-track"><div class="trait-bar-fill" id="bar-attitude"></div></div>
+      <span class="trait-val" id="val-attitude">0</span>
+    </div>
+  </div>
+  <p id="ending-attention"></p>
+  <p id="ending-line">"We didn't realize<br/>we were being shaped."</p>
+</div>
+
+<script>
+'use strict';
+
+// ═══════════════════════════════════
+//  SETTINGS — edit these freely
+// ═══════════════════════════════════
+const WORLD_W       = 800;
+const WORLD_H       = 560;
+const MOVE_SPEED    = 120;
+const INTERACT_DIST = 54;
+const VINE_DRAIN    = 4.0;   // attention pts/sec while on couch
+
+const INTERACTIONS = [
+  {
+    id:      'youtube',
+    label:   'sit at computer',
+    video:   'assets/yt.mov',
+    caption: 'You clicked something you didn\'t understand.',
+    fx:      { aggression:+18, attention:-12 },
+    drain:   false,
+    step:    '01 — computer',
+  },
+  {
+    id:      'vine',
+    label:   'pick up phone',
+    video:   'assets/vine.mov',
+    caption: 'You kept scrolling. It didn\'t really stop.',
+    fx:      { creativity:+15 },
+    drain:   true,
+    step:    '02 — couch',
+  },
+  {
+    id:      'penguin',
+    label:   'load Club Penguin',
+    video:   'assets/penguin.mov',
+    caption: 'You learned how to exist with others online.',
+    fx:      { social:+20, attention:-8 },
+    drain:   false,
+    step:    '03 — game pc',
+  },
+  {
+    id:      'tv',
+    label:   'watch TV',
+    video:   'assets/tv.mov',
+    caption: 'You absorbed more than you realized.',
+    fx:      { attitude:+16, attention:-10 },
+    drain:   false,
+    step:    '04 — television',
+  },
+];
+
+const TRAITS = { attention:100, aggression:0, creativity:0, social:0, attitude:0 };
+
+// ═══════════════════════════════════
+//  COLORS
+// ═══════════════════════════════════
+const C = {
+  floor:       0xf0ece4,
+  floorLine:   0xe8e2d8,
+  wall:        0xd8d2c8,
+  wallEdge:    0xc4bdb0,
+  rug:         0xe2dbd0,
+
+  desk:        0xcec8bc,
+  deskTop:     0xd8d2c6,
+  chair:       0xb8b2a8,
+  chairSeat:   0xc4beb4,
+  monitor:     0x2a2824,
+  screen1:     0x141c2a,
+  screen2:     0x080e18,
+  keyboard:    0xd0ccc4,
+  couch:       0xb8afa4,
+  couchSeat:   0xc8bfb4,
+  couchBack:   0xa8a09a,
+  cushion:     0xd4cdc6,
+  tv:          0x242220,
+  tvScreen:    0x0c0a08,
+  tvStand:     0xb0aaa0,
+  shelf:       0xb8b0a0,
+  book:        [0x8a7a6a, 0xa09080, 0x7a8a7a, 0x9a8878, 0x8a9080],
+  plant:       0x8a9e7a,
+  pot:         0xb8a898,
+  winFrame:    0xddd8d0,
+  winGlass:    0xd0e0f0,
+
+  player:      0x1a1814,
+  playerRim:   0x3a3630,
+  arrow:       0xb8a898,
+};
+
+// ═══════════════════════════════════
+//  SCENE
+// ═══════════════════════════════════
+class Room extends Phaser.Scene {
+  constructor() { super('Room'); }
+
+  preload() {}
+
+  create() {
+    this._step       = 0;
+    this._busy       = false;   // in video mode
+    this._near       = null;
+    this._done       = false;
+    this._px         = 340;
+    this._py         = 290;
+
+    this._buildRoom();
+    this._buildFurniture();
+    this._defineHotspots();
+    this._player = this.add.dom(this._px, this._py, 'img');
+this._player.node.src = "assets/player.gif";
+this._player.node.style.width = "36px";
+this._player.node.style.height = "36px";
+this._player.setOrigin(0.5);
+
+this._arrowGfx  = this.add.graphics();
+    // DOM refs
+    this._attFill  = document.getElementById('attention-fill');
+    this._prompt   = document.getElementById('prompt');
+    this._pText    = document.getElementById('prompt-text');
+    this._stepLbl  = document.getElementById('step-label');
+    this._vOver    = document.getElementById('video-overlay');
+    this._vEl      = document.getElementById('video-el');
+    this._capText  = document.getElementById('video-caption-text');
+    this._vFall    = document.getElementById('video-fallback');
+    this._fallCap  = document.getElementById('fallback-caption');
+
+    // Keys
+    this._cursors = this.input.keyboard.createCursorKeys();
+    this._wasd    = {
+      up:    this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.W),
+      down:  this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.S),
+      left:  this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.A),
+      right: this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.D),
+    };
+    this._eKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E);
+    this._eKey.on('down', () => this._onE());
+
+    this._updateHUD();
+    this._updateStep();
+  }
+
+  update(_, dt) {
+    if (this._done) return;
+    if (!this._busy) {
+      this._move(dt);
+      this._checkNear();
+      this._drawArrow();
+    } else {
+      const step = INTERACTIONS[this._step];
+      if (step && step.drain) {
+        TRAITS.attention = Math.max(0, TRAITS.attention - VINE_DRAIN * dt / 1000);
+        this._updateHUD();
+      }
+    }
+  }
+
+  // ─── ROOM ──────────────────────────────────────────
+  _buildRoom() {
+    const g = this.add.graphics();
+
+    // Floor
+    g.fillStyle(C.floor);
+    g.fillRect(0, 0, WORLD_W, WORLD_H);
+
+    // Floor grid lines — very faint
+    g.lineStyle(0.5, C.floorLine, 0.28);
+    for (let x = 0; x <= WORLD_W; x += 40) { g.lineBetween(x, 0, x, WORLD_H); }
+    for (let y = 0; y <= WORLD_H; y += 40) { g.lineBetween(0, y, WORLD_W, y); }
+
+    // Walls
+    g.fillStyle(C.wall);
+    g.fillRect(0, 0, WORLD_W, 30);   // top
+    g.fillRect(0, 0, 26, WORLD_H);   // left
+
+    // Wall inner edge
+    g.lineStyle(1, C.wallEdge, 0.5);
+    g.lineBetween(0, 30, WORLD_W, 30);
+    g.lineBetween(26, 0, 26, WORLD_H);
+
+    // Windows
+    this._window(g, 130, 0, 110, 30);
+    this._window(g, 510, 0, 110, 30);
+
+    // Rug under couch
+    g.fillStyle(C.rug, 0.65);
+    g.fillRoundedRect(480, 295, 250, 170, 4);
+    g.lineStyle(1, 0xc8c2b6, 0.35);
+    g.strokeRoundedRect(486, 301, 238, 158, 3);
+  }
+
+  _window(g, x, y, w, h) {
+    g.fillStyle(0xe4eef8);
+    g.fillRect(x+3, y, w-6, h-2);
+    g.fillStyle(C.winFrame);
+    g.fillRect(x, y, w, 4);
+    g.fillRect(x, y, 4, h);
+    g.fillRect(x+w-4, y, 4, h);
+    g.fillStyle(C.winGlass, 0.55);
+    g.fillRect(x+4, y+4, (w-12)/2, h-6);
+    g.fillRect(x+(w-12)/2+8, y+4, (w-12)/2, h-6);
+    g.fillStyle(C.winFrame);
+    g.fillRect(x+w/2-1, y+3, 2, h-5);
+  }
+
+  // ─── FURNITURE ──────────────────────────────────────
+  _buildFurniture() {
+    // ── Desk 1 — YouTube PC (top-left) ──────────────
+    this._desk(50, 38, 170, 72);
+    this._monitor(80, 42, 90, 54, C.screen1);
+    const k1 = this.add.graphics();
+    k1.fillStyle(C.keyboard); k1.fillRoundedRect(72, 96, 76, 12, 2);
+    k1.fillStyle(C.keyboard); k1.fillRoundedRect(154, 98, 16, 10, 3); // mouse
+    this._chair(130, 118);
+
+    // ── Bookshelf (left wall) ──────────────────────
+    this._bookshelf(26, 150, 48, 150);
+
+    // ── Plant (between desks, top) ─────────────────
+    this._plant(460, 48);
+
+    // ── Couch (right) — Vine ──────────────────────
+    this._couch(488, 308);
+    // side table
+    const st = this.add.graphics();
+    st.fillStyle(C.desk); st.fillRoundedRect(690, 326, 40, 40, 3);
+    // lamp on side table
+    st.fillStyle(0xccc8c0); st.fillRect(706, 312, 7, 16);
+    st.fillStyle(0xe4ddd4, 0.7); st.fillTriangle(702,312,716,312,709,303);
+
+    // ── TV (top-right) ─────────────────────────────
+    this._tv(530, 36);
+
+    // ── Desk 2 — Club Penguin (bottom-left) ────────
+    this._desk(36, 372, 210, 72);
+    this._monitor(78, 376, 110, 62, C.screen2);
+    const k2 = this.add.graphics();
+    k2.fillStyle(C.keyboard); k2.fillRoundedRect(66, 440, 98, 12, 2);
+    this._chair(128, 456);
+
+    // ── Small plant bottom-right ────────────────────
+    this._plant(730, 470);
+  }
+
+  _desk(x, y, w, h) {
+    const g = this.add.graphics();
+    g.fillStyle(C.deskTop); g.fillRoundedRect(x, y, w, h, 3);
+    g.fillStyle(C.desk);    g.fillRect(x, y+h-5, w, 5);
+    g.fillStyle(C.chair);
+    g.fillRect(x+6, y+h, 7, 10);
+    g.fillRect(x+w-13, y+h, 7, 10);
+  }
+
+  _monitor(x, y, w, h, sc) {
+    const g = this.add.graphics();
+    g.fillStyle(C.monitor); g.fillRoundedRect(x, y, w, h, 3);
+    g.fillStyle(sc);         g.fillRoundedRect(x+4, y+4, w-8, h-12, 2);
+    // subtle glow
+    g.fillStyle(sc === C.screen1 ? 0x1a2a3a : 0x050810, 0.4);
+    g.fillRoundedRect(x+4, y+4, w-8, h-12, 2);
+    g.fillStyle(C.monitor);
+    g.fillRect(x+w/2-3, y+h, 6, 7);
+    g.fillRect(x+w/2-9, y+h+7, 18, 3);
+  }
+
+  _chair(cx, y) {
+    const g = this.add.graphics();
+    g.fillStyle(C.chair);    g.fillRoundedRect(cx-14, y-22, 28, 22, 3);
+    g.fillStyle(C.chairSeat); g.fillRoundedRect(cx-18, y, 36, 13, 4);
+    g.fillStyle(C.chair);
+    g.fillRect(cx-22, y-2, 5, 16);
+    g.fillRect(cx+17, y-2, 5, 16);
+  }
+
+  _couch(x, y) {
+    const g = this.add.graphics();
+    const w = 200, h = 78;
+    // back
+    g.fillStyle(C.couchBack); g.fillRoundedRect(x, y, w, 22, 4);
+    // seat
+    g.fillStyle(C.couchSeat); g.fillRoundedRect(x, y+20, w, h-20, 4);
+    // arms
+    g.fillStyle(C.couch);
+    g.fillRoundedRect(x-12, y, 14, h, 4);
+    g.fillRoundedRect(x+w-2, y, 14, h, 4);
+    // cushions
+    g.fillStyle(C.cushion);
+    g.fillRoundedRect(x+8,  y+22, 80, h-28, 3);
+    g.fillRoundedRect(x+96, y+22, 80, h-28, 3);
+    // seam
+    g.lineStyle(1, C.couch, 0.45);
+    g.lineBetween(x+94, y+22, x+94, y+h);
+    // back pillows
+    g.fillStyle(C.cushion);
+    g.fillRoundedRect(x+12, y+4, 30, 14, 3);
+    g.fillRoundedRect(x+78, y+4, 30, 14, 3);
+    g.fillRoundedRect(x+148, y+4, 30, 14, 3);
+  }
+
+  _tv(x, y) {
+    const g = this.add.graphics();
+    g.fillStyle(C.tv); g.fillRoundedRect(x, y, 210, 124, 4);
+    g.fillStyle(C.tvScreen); g.fillRoundedRect(x+6, y+6, 198, 104, 2);
+    // faint reflection
+    g.fillStyle(0xffffff, 0.015);
+    g.fillTriangle(x+6, y+6, x+70, y+6, x+6, y+44);
+    // stand
+    g.fillStyle(C.tvStand);
+    g.fillRect(x+86, y+124, 38, 7);
+    g.fillRect(x+74, y+131, 62, 5);
+  }
+
+  _plant(x, y) {
+    const g = this.add.graphics();
+    g.fillStyle(C.pot);   g.fillRoundedRect(x-9, y+16, 18, 14, 2);
+    g.fillStyle(C.plant); g.fillRect(x-1, y+8, 2, 10);
+    g.fillStyle(C.plant, 0.9); g.fillEllipse(x, y, 20, 24);
+    g.fillStyle(C.plant, 0.65); g.fillEllipse(x-9, y+5, 14, 18);
+    g.fillStyle(C.plant, 0.75); g.fillEllipse(x+9, y+5, 14, 18);
+  }
+
+  _bookshelf(x, y, w, h) {
+    const g = this.add.graphics();
+    g.fillStyle(C.shelf); g.fillRect(x, y, w, h);
+    const rows = 4, rh = h/rows;
+    for (let i = 1; i < rows; i++) {
+      g.fillStyle(C.desk); g.fillRect(x, y+i*rh-2, w, 3);
+    }
+    for (let s = 0; s < rows; s++) {
+      let bx = x+3;
+      for (let b = 0; b < 5; b++) {
+        const bw = 6 + (b%2)*2;
+        if (bx+bw > x+w-3) break;
+        g.fillStyle(C.book[b]);
+        g.fillRect(bx, y+s*rh+5, bw, rh-9);
+        bx += bw+1;
+      }
+    }
+  }
+
+  // ─── HOTSPOTS ──────────────────────────────────────
+  _defineHotspots() {
+    // x,y = where player must walk to. Adjust if you move furniture.
+    this._spots = [
+      { id:'youtube',  x:148, y:118 },  // Desk 1
+      { id:'vine',     x:590, y:368 },  // Couch
+      { id:'penguin',  x:160, y:455 },  // Desk 2
+      { id:'tv',       x:638, y:134 },  // TV
+    ];
+  }
+
+  // ─── PLAYER ────────────────────────────────────────
+ 
+
+  // ─── MOVEMENT ──────────────────────────────────────
+  _move(dt) {
+    const s = MOVE_SPEED * dt / 1000;
+    let dx = 0, dy = 0;
+    if (this._cursors.left.isDown  || this._wasd.left.isDown)  dx -= 1;
+    if (this._cursors.right.isDown || this._wasd.right.isDown) dx += 1;
+    if (this._cursors.up.isDown    || this._wasd.up.isDown)    dy -= 1;
+    if (this._cursors.down.isDown  || this._wasd.down.isDown)  dy += 1;
+    if (dx && dy) { dx *= 0.707; dy *= 0.707; }
+    this._px = Phaser.Math.Clamp(this._px + dx*s, 30, WORLD_W-12);
+    this._py = Phaser.Math.Clamp(this._py + dy*s, 34, WORLD_H-12);
+    this._player.setPosition(this._px, this._py);
+  }
+
+  // ─── PROXIMITY ─────────────────────────────────────
+  _checkNear() {
+    if (this._step >= this._spots.length) return;
+    const spot = this._spots[this._step];
+    const d = Phaser.Math.Distance.Between(this._px, this._py, spot.x, spot.y);
+    if (d < INTERACT_DIST) {
+      if (this._near !== spot.id) {
+        this._near = spot.id;
+        this._pText.textContent = INTERACTIONS[this._step].label;
+        this._prompt.classList.add('visible');
+      }
+    } else {
+      if (this._near) { this._near = null; this._prompt.classList.remove('visible'); }
+    }
+  }
+
+  // ─── GUIDE ARROW ───────────────────────────────────
+  _drawArrow() {
+    const g = this._arrowGfx;
+    g.clear();
+    if (this._step >= this._spots.length || this._done) return;
+    const spot = this._spots[this._step];
+    const d = Phaser.Math.Distance.Between(this._px, this._py, spot.x, spot.y);
+    if (d < 70) return;
+    const ang = Math.atan2(spot.y - this._py, spot.x - this._px);
+    const ax = this._px + Math.cos(ang)*28;
+    const ay = this._py + Math.sin(ang)*28;
+    const hl = 7, ha = 0.38;
+    g.lineStyle(1.5, C.arrow, 0.55);
+    g.beginPath();
+    g.moveTo(ax, ay);
+    g.lineTo(ax - hl*Math.cos(ang-ha), ay - hl*Math.sin(ang-ha));
+    g.moveTo(ax, ay);
+    g.lineTo(ax - hl*Math.cos(ang+ha), ay - hl*Math.sin(ang+ha));
+    g.strokePath();
+    g.fillStyle(C.arrow, 0.35);
+    g.fillCircle(this._px + Math.cos(ang)*14, this._py + Math.sin(ang)*14, 2);
+  }
+
+  // ─── E KEY ─────────────────────────────────────────
+  _onE() {
+    if (this._done) return;
+    if (this._busy) { this._exit(); return; }
+    if (this._near) { this._enter(); }
+  }
+
+  _enter() {
+    this._busy = true;
+    this._prompt.classList.remove('visible');
+    this._arrowGfx.clear();
+
+    const step = INTERACTIONS[this._step];
+
+    // Apply instant trait effects
+    Object.entries(step.fx).forEach(([k, v]) => {
+      TRAITS[k] = Phaser.Math.Clamp((TRAITS[k]||0)+v, 0, 100);
+    });
+    this._updateHUD();
+
+    // Set caption
+    this._capText.textContent = step.caption;
+    this._vFall.classList.remove('show');
+
+    // Try to load video
+    this._vEl.src = step.video;
+    this._vEl.currentTime = 0;
+
+    const playPromise = this._vEl.play();
+    if (playPromise !== undefined) {
+      playPromise.catch(() => {
+        // Video missing or blocked — show fallback
+        this._vFall.classList.add('show');
+        this._fallCap.textContent = step.caption;
+      });
+    }
+
+    this._vOver.classList.add('active');
+  }
+
+  _exit() {
+    this._busy = false;
+    this._vEl.pause();
+    this._vEl.src = '';
+    this._vFall.classList.remove('show');
+    this._vOver.classList.remove('active');
+    this._near = null;
+
+    this._step++;
+    this._updateHUD();
+    this._updateStep();
+
+    if (this._step >= INTERACTIONS.length) {
+      this._done = true;
+      this._prompt.classList.remove('visible');
+      this._arrowGfx.clear();
+      setTimeout(() => this._showEnding(), 700);
+    }
+  }
+
+  // ─── HUD ───────────────────────────────────────────
+  _updateHUD() {
+    document.getElementById('attention-fill').style.width =
+      Math.max(0, Math.min(100, TRAITS.attention)) + '%';
+  }
+  _updateStep() {
+    const lbl = document.getElementById('step-label');
+    lbl.textContent = this._step < INTERACTIONS.length
+      ? INTERACTIONS[this._step].step : '';
+  }
+
+  // ─── ENDING ────────────────────────────────────────
+  _showEnding() {
+    const el = document.getElementById('ending');
+    el.classList.add('active');
+
+    const rows = [
+      { bar:'bar-aggression', val:'val-aggression', key:'aggression' },
+      { bar:'bar-creativity', val:'val-creativity', key:'creativity'  },
+      { bar:'bar-social',     val:'val-social',     key:'social'      },
+      { bar:'bar-attitude',   val:'val-attitude',   key:'attitude'    },
+    ];
+    rows.forEach((r, i) => {
+      setTimeout(() => {
+        const v = Math.round(TRAITS[r.key]);
+        document.getElementById(r.bar).style.width = Math.round((v/100)*100)+'%';
+        document.getElementById(r.val).textContent = v;
+      }, 350 + i*220);
+    });
+
+    document.getElementById('ending-attention').textContent =
+      'Attention remaining — ' + Math.round(TRAITS.attention);
+
+    setTimeout(() => {
+      document.getElementById('ending-line').classList.add('show');
+    }, 2400);
+  }
+}
+
+// ═══════════════════════════════════
+//  LAUNCH
+// ═══════════════════════════════════
+new Phaser.Game({
+  type: Phaser.AUTO,
+  width: WORLD_W,
+  height: WORLD_H,
+  parent: "game-container",
+  scene: Room,
+
+  dom: {
+    createContainer: true
+  }
+});
+</script>
+</body>
+</html>
